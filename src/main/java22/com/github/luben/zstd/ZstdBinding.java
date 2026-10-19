@@ -118,25 +118,175 @@ final class ZstdBinding {
         return MethodHandles.explicitCastArguments(adapted, javaType);
     }
 
+    /* Read the native header constants once during class initialization, after
+     * loading the library and initializing LINKER, LOOKUP and the handle adapter.
+     * C getters keep these values in sync with the bundled zstd and its ABI;
+     * callers use the cached fields without further native calls. */
+    private static int readConstant(@NotNull String name) {
+        String symbolName = "zstd_java_" + name;
+        try {
+            MethodHandle getter = downcall(symbolName,
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT), MethodType.methodType(int.class));
+            return (int) getter.invokeExact();
+        } catch (Throwable t) {
+            throw new AssertionError("Call to " + symbolName + " failed", t);
+        }
+    }
+
     /* ZSTD_EndDirective */
-    static final int ZSTD_E_CONTINUE = 0;
-    static final int ZSTD_E_FLUSH    = 1;
-    static final int ZSTD_E_END      = 2;
+    static final int ZSTD_E_CONTINUE = readConstant("e_continue");
+    static final int ZSTD_E_FLUSH = readConstant("e_flush");
+    static final int ZSTD_E_END = readConstant("e_end");
 
     /* ZSTD_ResetDirective */
-    static final int ZSTD_RESET_SESSION_ONLY           = 1;
-    static final int ZSTD_RESET_SESSION_AND_PARAMETERS = 3;
+    static final int ZSTD_RESET_SESSION_ONLY = readConstant("reset_session_only");
+    static final int ZSTD_RESET_SESSION_AND_PARAMETERS = readConstant("reset_session_and_parameters");
 
     /* ZSTD_cParameter */
-    static final int ZSTD_C_COMPRESSION_LEVEL = 100;
-    static final int ZSTD_C_CONTENT_SIZE_FLAG = 200;
-    static final int ZSTD_C_CHECKSUM_FLAG     = 201;
-    static final int ZSTD_C_DICT_ID_FLAG      = 202;
+    static final int ZSTD_C_COMPRESSION_LEVEL = readConstant("c_compressionLevel");
+    static final int ZSTD_C_CONTENT_SIZE_FLAG = readConstant("c_contentSizeFlag");
+    static final int ZSTD_C_CHECKSUM_FLAG = readConstant("c_checksumFlag");
+    static final int ZSTD_C_DICT_ID_FLAG = readConstant("c_dictIDFlag");
 
     /* ZSTD_ErrorCode */
-    static final int ZSTD_ERROR_DICTIONARY_WRONG   = 32;
-    static final int ZSTD_ERROR_DST_SIZE_TOO_SMALL = 70;
-    static final int ZSTD_ERROR_SRC_SIZE_WRONG     = 72;
+    static final int ZSTD_ERROR_DICTIONARY_WRONG = readConstant("error_dictionary_wrong");
+    static final int ZSTD_ERROR_DST_SIZE_TOO_SMALL = readConstant("error_dstSize_tooSmall");
+    static final int ZSTD_ERROR_SRC_SIZE_WRONG = readConstant("error_srcSize_wrong");
+
+    static final int ZSTD_ERROR_NO_ERROR = readConstant("error_no_error");
+    static final int ZSTD_ERROR_GENERIC = readConstant("error_GENERIC");
+    static final int ZSTD_ERROR_PREFIX_UNKNOWN = readConstant("error_prefix_unknown");
+    static final int ZSTD_ERROR_VERSION_UNSUPPORTED = readConstant("error_version_unsupported");
+    static final int ZSTD_ERROR_FRAME_PARAMETER_UNSUPPORTED = readConstant("error_frameParameter_unsupported");
+    static final int ZSTD_ERROR_FRAME_PARAMETER_WINDOW_TOO_LARGE = readConstant("error_frameParameter_windowTooLarge");
+    static final int ZSTD_ERROR_CORRUPTION_DETECTED = readConstant("error_corruption_detected");
+    static final int ZSTD_ERROR_CHECKSUM_WRONG = readConstant("error_checksum_wrong");
+    static final int ZSTD_ERROR_DICTIONARY_CORRUPTED = readConstant("error_dictionary_corrupted");
+    static final int ZSTD_ERROR_DICTIONARY_CREATION_FAILED = readConstant("error_dictionaryCreation_failed");
+    static final int ZSTD_ERROR_PARAMETER_UNSUPPORTED = readConstant("error_parameter_unsupported");
+    static final int ZSTD_ERROR_PARAMETER_OUT_OF_BOUND = readConstant("error_parameter_outOfBound");
+    static final int ZSTD_ERROR_TABLE_LOG_TOO_LARGE = readConstant("error_tableLog_tooLarge");
+    static final int ZSTD_ERROR_MAX_SYMBOL_VALUE_TOO_LARGE = readConstant("error_maxSymbolValue_tooLarge");
+    static final int ZSTD_ERROR_MAX_SYMBOL_VALUE_TOO_SMALL = readConstant("error_maxSymbolValue_tooSmall");
+    static final int ZSTD_ERROR_STAGE_WRONG = readConstant("error_stage_wrong");
+    static final int ZSTD_ERROR_INIT_MISSING = readConstant("error_init_missing");
+    static final int ZSTD_ERROR_MEMORY_ALLOCATION = readConstant("error_memory_allocation");
+    static final int ZSTD_ERROR_WORK_SPACE_TOO_SMALL = readConstant("error_workSpace_tooSmall");
+    static final int ZSTD_ERROR_DST_BUFFER_NULL = readConstant("error_dstBuffer_null");
+
+    /* zstd.h macros, evaluated by the native compiler for the target ABI. */
+    static final int ZSTD_MAGICNUMBER = readConstant("MAGICNUMBER");
+    static final int ZSTD_WINDOWLOG_MIN = readConstant("WINDOWLOG_MIN");
+    static final int ZSTD_WINDOWLOG_MAX = readConstant("WINDOWLOG_MAX");
+    static final int ZSTD_HASHLOG_MIN = readConstant("HASHLOG_MIN");
+    static final int ZSTD_HASHLOG_MAX = readConstant("HASHLOG_MAX");
+    static final int ZSTD_CHAINLOG_MIN = readConstant("CHAINLOG_MIN");
+    static final int ZSTD_CHAINLOG_MAX = readConstant("CHAINLOG_MAX");
+    static final int ZSTD_SEARCHLOG_MIN = readConstant("SEARCHLOG_MIN");
+    static final int ZSTD_SEARCHLOG_MAX = readConstant("SEARCHLOG_MAX");
+    static final int ZSTD_BLOCKSIZE_MAX = readConstant("BLOCKSIZE_MAX");
+    static final int ZSTD_CLEVEL_DEFAULT = readConstant("CLEVEL_DEFAULT");
+
+    /* Parameters and enum values used by Zstd configuration methods. */
+    static final int ZSTD_F_ZSTD1_MAGICLESS = readConstant("f_zstd1_magicless");
+    static final int ZSTD_F_ZSTD1 = readConstant("f_zstd1");
+    static final int ZSTD_C_FORMAT = readConstant("c_format");
+    static final int ZSTD_C_NB_WORKERS = readConstant("c_nbWorkers");
+    static final int ZSTD_C_OVERLAP_LOG = readConstant("c_overlapLog");
+    static final int ZSTD_C_JOB_SIZE = readConstant("c_jobSize");
+    static final int ZSTD_C_TARGET_LENGTH = readConstant("c_targetLength");
+    static final int ZSTD_C_MIN_MATCH = readConstant("c_minMatch");
+    static final int ZSTD_C_SEARCH_LOG = readConstant("c_searchLog");
+    static final int ZSTD_C_CHAIN_LOG = readConstant("c_chainLog");
+    static final int ZSTD_C_HASH_LOG = readConstant("c_hashLog");
+    static final int ZSTD_C_WINDOW_LOG = readConstant("c_windowLog");
+    static final int ZSTD_C_STRATEGY = readConstant("c_strategy");
+    static final int ZSTD_D_WINDOW_LOG_MAX = readConstant("d_windowLogMax");
+    static final int ZSTD_D_FORMAT = readConstant("d_format");
+    static final int ZSTD_RMD_REF_MULTIPLE_DDICTS = readConstant("rmd_refMultipleDDicts");
+    static final int ZSTD_RMD_REF_SINGLE_DDICT = readConstant("rmd_refSingleDDict");
+    static final int ZSTD_D_REF_MULTIPLE_DDICTS = readConstant("d_refMultipleDDicts");
+    static final int ZSTD_C_VALIDATE_SEQUENCES = readConstant("c_validateSequences");
+    static final int ZSTD_C_ENABLE_SEQ_PRODUCER_FALLBACK = readConstant("c_enableSeqProducerFallback");
+    static final int ZSTD_C_SEARCH_FOR_EXTERNAL_REPCODES = readConstant("c_searchForExternalRepcodes");
+    static final int ZSTD_C_ENABLE_LONG_DISTANCE_MATCHING = readConstant("c_enableLongDistanceMatching");
+    static final int ZSTD_WINDOWLOG_LIMIT_DEFAULT = readConstant("WINDOWLOG_LIMIT_DEFAULT");
+    static final int ZSTD_PS_ENABLE = readConstant("ps_enable");
+    static final int ZSTD_PS_DISABLE = readConstant("ps_disable");
+
+    private static final MethodHandle ZSTD_DCtx_setParameter =
+            downcall("ZSTD_DCtx_setParameter",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT),
+                    MethodType.methodType(long.class, MemorySegment.class, int.class, int.class));
+    private static final MethodHandle ZSTD_registerSequenceProducer =
+            downcall("ZSTD_registerSequenceProducer",
+                    FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.ADDRESS),
+                    MethodType.methodType(void.class, MemorySegment.class, MemorySegment.class, MemorySegment.class));
+
+    private static final MethodHandle ZSTD_compressBound =
+            downcall(
+                    "ZSTD_compressBound",
+                    FunctionDescriptor.of(C_SIZE_T, C_SIZE_T),
+                    MethodType.methodType(long.class, long.class));
+    private static final MethodHandle ZSTD_isError =
+            downcall(
+                    "ZSTD_isError",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, C_SIZE_T),
+                    MethodType.methodType(int.class, long.class));
+    private static final MethodHandle ZSTD_getErrorName =
+            downcall(
+                    "ZSTD_getErrorName",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(MemorySegment.class, long.class));
+    private static final MethodHandle ZSTD_getErrorCode =
+            downcall(
+                    "ZSTD_getErrorCode",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, C_SIZE_T),
+                    MethodType.methodType(int.class, long.class));
+    private static final MethodHandle ZSTD_minCLevel =
+            downcall(
+                    "ZSTD_minCLevel",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT),
+                    MethodType.methodType(int.class));
+    private static final MethodHandle ZSTD_maxCLevel =
+            downcall(
+                    "ZSTD_maxCLevel",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT),
+                    MethodType.methodType(int.class));
+
+    /* Copying dictionary creation accepts heap segments under critical, matching
+     * JNI's GetPrimitiveArrayCritical. By-reference creation accepts only native
+     * segments: the dictionary keeps the pointer after the downcall returns. */
+    private static final MethodHandle ZSTD_createCDict =
+            downcallCritical(
+                    "ZSTD_createCDict",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, C_SIZE_T, ValueLayout.JAVA_INT),
+                    MethodType.methodType(MemorySegment.class, MemorySegment.class, long.class, int.class));
+    private static final MethodHandle ZSTD_createCDict_byReference =
+            downcall(
+                    "ZSTD_createCDict_byReference",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, C_SIZE_T, ValueLayout.JAVA_INT),
+                    MethodType.methodType(MemorySegment.class, MemorySegment.class, long.class, int.class));
+    private static final MethodHandle ZSTD_freeCDict =
+            downcall(
+                    "ZSTD_freeCDict",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS),
+                    MethodType.methodType(long.class, MemorySegment.class));
+    private static final MethodHandle ZSTD_createDDict =
+            downcallCritical(
+                    "ZSTD_createDDict",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(MemorySegment.class, MemorySegment.class, long.class));
+    private static final MethodHandle ZSTD_createDDict_byReference =
+            downcall(
+                    "ZSTD_createDDict_byReference",
+                    FunctionDescriptor.of(ValueLayout.ADDRESS, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(MemorySegment.class, MemorySegment.class, long.class));
+    private static final MethodHandle ZSTD_freeDDict =
+            downcall(
+                    "ZSTD_freeDDict",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS),
+                    MethodType.methodType(long.class, MemorySegment.class));
 
     private static final MethodHandle ZSTD_CStreamOutSize =
             downcall(
@@ -204,6 +354,21 @@ final class ZstdBinding {
      * implementation pins them the same way (GetPrimitiveArrayCritical). */
     private static final MethodHandle ZSTD_compress2 =
             downcallCritical(
+                    "ZSTD_compress2",
+                    FunctionDescriptor.of(
+                            C_SIZE_T,
+                            ValueLayout.ADDRESS,                                       // ZSTD_CCtx* cctx
+                            ValueLayout.ADDRESS, C_SIZE_T,                             // dst, dstCapacity
+                            ValueLayout.ADDRESS, C_SIZE_T),                            // src, srcSize
+                    MethodType.methodType(long.class,
+                            MemorySegment.class,
+                            MemorySegment.class, long.class,
+                            MemorySegment.class, long.class));
+    /* Not critical: for callers whose JNI counterpart passes raw native addresses and
+     * pins nothing (Zstd.compressUnsafe, ZstdCompressCtx.compressDirectByteBuffer0). A critical call blocks GC for its whole
+     * duration, which JNI never did on these paths. */
+    private static final MethodHandle ZSTD_compress2_native =
+            downcall(
                     "ZSTD_compress2",
                     FunctionDescriptor.of(
                             C_SIZE_T,
@@ -357,6 +522,196 @@ final class ZstdBinding {
                             MemorySegment.class,
                             MemorySegment.class, long.class,
                             MemorySegment.class, long.class));
+    /* Not critical: for ZstdDecompressCtx.decompressDirectByteBuffer0, whose JNI
+     * counterpart passes direct-buffer addresses and pins nothing. */
+    private static final MethodHandle ZSTD_decompressDCtx_native =
+            downcall(
+                    "ZSTD_decompressDCtx",
+                    FunctionDescriptor.of(
+                            C_SIZE_T,
+                            ValueLayout.ADDRESS,                                       // ZSTD_DCtx* dctx
+                            ValueLayout.ADDRESS, C_SIZE_T,                             // dst, dstCapacity
+                            ValueLayout.ADDRESS, C_SIZE_T),                            // src, srcSize
+                    MethodType.methodType(long.class,
+                            MemorySegment.class,
+                            MemorySegment.class, long.class,
+                            MemorySegment.class, long.class));
+
+    /* Verified against jextract and the vendored zdict.h, including the nested
+     * struct passed by value to the legacy trainer. */
+    private static final MemoryLayout ZDICT_PARAMS = MemoryLayout.structLayout(
+            ValueLayout.JAVA_INT.withName("compressionLevel"),
+            ValueLayout.JAVA_INT.withName("notificationLevel"),
+            ValueLayout.JAVA_INT.withName("dictID"));
+    private static final MemoryLayout ZDICT_LEGACY_PARAMS = MemoryLayout.structLayout(
+            ValueLayout.JAVA_INT.withName("selectivityLevel"),
+            ZDICT_PARAMS.withName("zParams"));
+    private static final long LEGACY_COMPRESSION_LEVEL = ZDICT_LEGACY_PARAMS.byteOffset(
+            MemoryLayout.PathElement.groupElement("zParams"),
+            MemoryLayout.PathElement.groupElement("compressionLevel"));
+
+    private static final MethodHandle ZSTD_findFrameCompressedSize =
+            downcallCritical("ZSTD_findFrameCompressedSize",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class));
+    // Not critical: for direct buffers, whose JNI counterpart pins nothing.
+    private static final MethodHandle ZSTD_findFrameCompressedSize_native =
+            downcall("ZSTD_findFrameCompressedSize",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class));
+    /* JNI_ZSTD_decompressedSize, ported to ffm_zstd.c. Critical for byte[] (JNI pins
+     * with GetPrimitiveArrayCritical); plain for direct buffers, which JNI does not pin. */
+    private static final MethodHandle zstd_java_decompressedSize =
+            downcallCritical("zstd_java_decompressedSize",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T, ValueLayout.JAVA_INT),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class, int.class));
+    private static final MethodHandle zstd_java_decompressedSize_native =
+            downcall("zstd_java_decompressedSize",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T, ValueLayout.JAVA_INT),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class, int.class));
+    private static final MethodHandle ZSTD_getDictID_fromFrame =
+            downcallCritical("ZSTD_getDictID_fromFrame",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class));
+    // Not critical: for direct buffers, whose JNI counterpart pins nothing.
+    private static final MethodHandle ZSTD_getDictID_fromFrame_native =
+            downcall("ZSTD_getDictID_fromFrame",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class));
+    private static final MethodHandle ZSTD_getDictID_fromDict =
+            downcallCritical("ZSTD_getDictID_fromDict",
+                    FunctionDescriptor.of(ValueLayout.JAVA_INT, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class));
+    private static final MethodHandle ZSTD_decompress =
+            downcall("ZSTD_decompress",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class, MemorySegment.class, long.class));
+    // Training may run for a long time: use ordinary calls with native buffers.
+    // This fork's default trainer has a sixth argument, compressionLevel.
+    private static final MethodHandle ZDICT_trainFromBuffer =
+            downcall("ZDICT_trainFromBuffer",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ValueLayout.JAVA_INT),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class,
+                            MemorySegment.class, MemorySegment.class, int.class, int.class));
+    private static final MethodHandle ZDICT_trainFromBuffer_legacy =
+            downcall("ZDICT_trainFromBuffer_legacy",
+                    FunctionDescriptor.of(C_SIZE_T, ValueLayout.ADDRESS, C_SIZE_T,
+                            ValueLayout.ADDRESS, ValueLayout.ADDRESS, ValueLayout.JAVA_INT, ZDICT_LEGACY_PARAMS),
+                    MethodType.methodType(long.class, MemorySegment.class, long.class,
+                            MemorySegment.class, MemorySegment.class, int.class, MemorySegment.class));
+
+    static long findFrameCompressedSize(MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_findFrameCompressedSize.invokeExact(src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_findFrameCompressedSize failed", t);
+        }
+    }
+
+    /** {@link #findFrameCompressedSize} without critical mode; `src` must be a native segment. */
+    static long findFrameCompressedSizeNative(MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_findFrameCompressedSize_native.invokeExact(src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_findFrameCompressedSize failed", t);
+        }
+    }
+
+    static long getDictIDFromFrame(MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_getDictID_fromFrame.invokeExact(src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_getDictID_fromFrame failed", t);
+        }
+    }
+
+    /** {@link #getDictIDFromFrame} without critical mode; `src` must be a native segment. */
+    static long getDictIDFromFrameNative(MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_getDictID_fromFrame_native.invokeExact(src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_getDictID_fromFrame failed", t);
+        }
+    }
+
+    static long getDictIDFromDict(MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_getDictID_fromDict.invokeExact(src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_getDictID_fromDict failed", t);
+        }
+    }
+
+    static long decompress(MemorySegment dst, long capacity, MemorySegment src, long size) {
+        try {
+            return (long) ZSTD_decompress.invokeExact(dst, capacity, src, size);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_decompress failed", t);
+        }
+    }
+
+    // A negative error code stored into a C size_t: on 32-bit it zero-extends
+    // when widened to jlong. Preserve that narrowing.
+    static long asSizeT(long value) {
+        return SIZE_T_IS_64_BIT ? value : Integer.toUnsignedLong((int) value);
+    }
+
+    static long frameContentSize(MemorySegment src, long size, boolean magicless) {
+        try {
+            return (long) zstd_java_decompressedSize.invokeExact(src, size, magicless ? 1 : 0);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to zstd_java_decompressedSize failed", t);
+        }
+    }
+
+    /** {@link #frameContentSize} without critical mode; `src` must be a native segment. */
+    static long frameContentSizeNative(MemorySegment src, long size, boolean magicless) {
+        try {
+            return (long) zstd_java_decompressedSize_native.invokeExact(src, size, magicless ? 1 : 0);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to zstd_java_decompressedSize failed", t);
+        }
+    }
+
+    static MemorySegment allocateTrainingBuffer(Arena arena, long bytes) {
+        // Do not truncate a packed buffer allocation on a 32-bit platform.
+        if (bytes != asSizeT(bytes)) {
+            throw new OutOfMemoryError("native heap");
+        }
+        return arena.allocate(bytes, C_SIZE_T.byteAlignment());
+    }
+
+    static MemorySegment allocateSampleSizes(Arena arena, int count) {
+        return allocateTrainingBuffer(arena, count * C_SIZE_T.byteSize());
+    }
+
+    static void setSampleSize(MemorySegment sizes, int index, int size) {
+        if (SIZE_T_IS_64_BIT) {
+            sizes.setAtIndex((ValueLayout.OfLong) C_SIZE_T, index, (long) size);
+        } else {
+            sizes.setAtIndex((ValueLayout.OfInt) C_SIZE_T, index, size);
+        }
+    }
+
+    static long trainDictionary(Arena arena, MemorySegment dst, MemorySegment samples,
+                                MemorySegment sizes, int count, boolean legacy, int level) {
+        MemorySegment params = MemorySegment.NULL;
+        if (legacy) {
+            params = arena.allocate(ZDICT_LEGACY_PARAMS); // Zero initialized, as in JNI.
+            params.set(ValueLayout.JAVA_INT, LEGACY_COMPRESSION_LEVEL, level);
+        }
+        try {
+            if (legacy) {
+                return (long) ZDICT_trainFromBuffer_legacy.invokeExact(
+                        dst, dst.byteSize(), samples, sizes, count, params);
+            }
+            return (long) ZDICT_trainFromBuffer.invokeExact(
+                    dst, dst.byteSize(), samples, sizes, count, level);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to dictionary trainer failed", t);
+        }
+    }
 
     private static MethodHandle downcall(@NotNull String name,
                                          @NotNull FunctionDescriptor descriptor,
@@ -431,7 +786,7 @@ final class ZstdBinding {
     }
 
     /**
-     * Checks native results in Java, avoiding an extra JNI call to {@link Zstd#isError}.
+     * Checks native results in Java, avoiding an extra downcall to {@link Zstd#isError}.
      * These checks replace error checks previously performed inside the JNI C code.
      * <p>
      * Tests the sign bit of the native {@code size_t}: zstd errors set it, while the
@@ -450,6 +805,58 @@ final class ZstdBinding {
         return SIZE_T_IS_64_BIT
                 ? new SizeTRef.Wide(new long[1])
                 : new SizeTRef.Narrow(new int[1]);
+    }
+
+    static long compressBound(long srcSize) {
+        try {
+            return (long) ZSTD_compressBound.invokeExact(srcSize);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_compressBound failed", t);
+        }
+    }
+
+    static boolean isErrorCode(long code) {
+        try {
+            return (int) ZSTD_isError.invokeExact(code) != 0;
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_isError failed", t);
+        }
+    }
+
+    static @NotNull String getErrorName(long code) {
+        try {
+            MemorySegment name = (MemorySegment) ZSTD_getErrorName.invokeExact(code);
+            // libzstd owns this NUL-terminated static string. The pointer result has
+            // zero extent; allow scanning through its terminator, without owning or
+            // freeing the library's storage. The Java String copies the bytes.
+            return name.reinterpret(Long.MAX_VALUE).getString(0);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_getErrorName failed", t);
+        }
+    }
+
+    static long getErrorCode(long code) {
+        try {
+            return (long) (int) ZSTD_getErrorCode.invokeExact(code);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_getErrorCode failed", t);
+        }
+    }
+
+    static int minCLevel() {
+        try {
+            return (int) ZSTD_minCLevel.invokeExact();
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_minCLevel failed", t);
+        }
+    }
+
+    static int maxCLevel() {
+        try {
+            return (int) ZSTD_maxCLevel.invokeExact();
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_maxCLevel failed", t);
+        }
     }
 
     static long cStreamOutSize() {
@@ -490,6 +897,23 @@ final class ZstdBinding {
             return (long) ZSTD_initCStream.invokeExact(cctx, level);
         } catch (Throwable t) {
             throw new AssertionError("Call to ZSTD_initCStream failed", t);
+        }
+    }
+
+    static long setDCtxParameter(@NotNull MemorySegment dctx, int param, int value) {
+        try {
+            return (long) ZSTD_DCtx_setParameter.invokeExact(dctx, param, value);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_DCtx_setParameter failed", t);
+        }
+    }
+
+    static void registerSequenceProducer(@NotNull MemorySegment cctx, @NotNull MemorySegment state,
+                                         @NotNull MemorySegment function) {
+        try {
+            ZSTD_registerSequenceProducer.invokeExact(cctx, state, function);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_registerSequenceProducer failed", t);
         }
     }
 
@@ -553,6 +977,17 @@ final class ZstdBinding {
                           @NotNull MemorySegment src, long srcSize) {
         try {
             return (long) ZSTD_compress2.invokeExact(cctx, dst, dstCapacity, src, srcSize);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_compress2 failed", t);
+        }
+    }
+
+    /** {@link #compress2} without critical mode; `dst` and `src` must be native segments. */
+    static long compress2Native(@NotNull MemorySegment cctx,
+                                @NotNull MemorySegment dst, long dstCapacity,
+                                @NotNull MemorySegment src, long srcSize) {
+        try {
+            return (long) ZSTD_compress2_native.invokeExact(cctx, dst, dstCapacity, src, srcSize);
         } catch (Throwable t) {
             throw new AssertionError("Call to ZSTD_compress2 failed", t);
         }
@@ -743,6 +1178,65 @@ final class ZstdBinding {
             return (long) ZSTD_decompressDCtx.invokeExact(dctx, dst, dstCapacity, src, srcSize);
         } catch (Throwable t) {
             throw new AssertionError("Call to ZSTD_decompressDCtx failed", t);
+        }
+    }
+
+    /** {@link #decompressDCtx} without critical mode; `dst` and `src` must be native segments. */
+    static long decompressDCtxNative(@NotNull MemorySegment dctx,
+                                     @NotNull MemorySegment dst, long dstCapacity,
+                                     @NotNull MemorySegment src, long srcSize) {
+        try {
+            return (long) ZSTD_decompressDCtx_native.invokeExact(dctx, dst, dstCapacity, src, srcSize);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_decompressDCtx failed", t);
+        }
+    }
+
+    static @NotNull MemorySegment createCDict(@NotNull MemorySegment dict, long dictSize, int level) {
+        try {
+            return (MemorySegment) ZSTD_createCDict.invokeExact(dict, dictSize, level);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_createCDict failed", t);
+        }
+    }
+
+    static @NotNull MemorySegment createCDictByReference(@NotNull MemorySegment dict, long dictSize, int level) {
+        try {
+            return (MemorySegment) ZSTD_createCDict_byReference.invokeExact(dict, dictSize, level);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_createCDict_byReference failed", t);
+        }
+    }
+
+    static long freeCDict(@NotNull MemorySegment dict) {
+        try {
+            return (long) ZSTD_freeCDict.invokeExact(dict);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_freeCDict failed", t);
+        }
+    }
+
+    static @NotNull MemorySegment createDDict(@NotNull MemorySegment dict, long dictSize) {
+        try {
+            return (MemorySegment) ZSTD_createDDict.invokeExact(dict, dictSize);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_createDDict failed", t);
+        }
+    }
+
+    static @NotNull MemorySegment createDDictByReference(@NotNull MemorySegment dict, long dictSize) {
+        try {
+            return (MemorySegment) ZSTD_createDDict_byReference.invokeExact(dict, dictSize);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_createDDict_byReference failed", t);
+        }
+    }
+
+    static long freeDDict(@NotNull MemorySegment dict) {
+        try {
+            return (long) ZSTD_freeDDict.invokeExact(dict);
+        } catch (Throwable t) {
+            throw new AssertionError("Call to ZSTD_freeDDict failed", t);
         }
     }
 }

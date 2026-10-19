@@ -11,9 +11,12 @@ ThisBuild / versionScheme := Some("pvp")
 scalaVersion := "2.13.12"
 
 enablePlugins(JniPlugin, ModuleInfoPlugin)
+// Without an explicit list the plugin also exports META-INF/versions/22, which breaks
+// the module. Keep in sync with Export-Package below.
 moduleInfo := com.sandinh.javamodule.moduleinfo.JpmsModule(
   "com.github.luben.zstd_jni", // moduleName
   openModule = false,
+  exports = Set("com.github.luben.zstd", "com.github.luben.zstd.util"),
 )
 
 autoScalaLibrary := false
@@ -87,7 +90,7 @@ jniGccFlags := (
       else Seq("-Wl,--version-script=" + PWD + "/libzstd-jni.so.map")
     jniGccFlags.value.filterNot(_ == "-fPIC") ++
       Seq("-D_JNI_IMPLEMENTATION_", "-Wl,--kill-at",
-        // Exports ZSTD_* for FFM's symbol lookups. jni_md.h's JNIEXPORT dllexport turns
+        // Exports ZSTD_* and ZDICT_* for FFM's symbol lookups. jni_md.h's JNIEXPORT dllexport turns
         // ld's auto-export off, and on PE the version script can only filter, not add.
         "-DZSTD_DLL_EXPORT=1",
         "-static-libgcc") ++ versionScript
@@ -213,7 +216,6 @@ Compile / packageBin / packageOptions ++= Seq(
       |linux/amd64/libzstd-jni-${version.value}.so;osname=Linux;processor=amd64,
       |linux/arm/libzstd-jni-${version.value}.so;osname=Linux;processor=arm,
       |linux/i386/libzstd-jni-${version.value}.so;osname=Linux;processor=i386,
-      |linux/mips64/libzstd-jni-${version.value}.so;osname=Linux;processor=mips64,
       |linux/loongarch64/libzstd-jni-${version.value}.so;osname=Linux;processor=loongarch64,
       |linux/ppc64/libzstd-jni-${version.value}.so;osname=Linux;processor=ppc64,
       |linux/ppc64le/libzstd-jni-${version.value}.so;osname=Linux;processor=ppc64le,
@@ -235,7 +237,6 @@ Compile / packageBin / packageOptions ++= Seq(
       |linux.arm,
       |linux.i386,
       |linux.loongarch64,
-      |linux.mips64,
       |linux.ppc64,
       |linux.ppc64le,
       |linux.riscv64,
@@ -343,13 +344,6 @@ Linux_ppc64 / packageBin / mappings := {
 }
 addArtifact(Artifact(nameValue, "linux_ppc64"), Linux_ppc64 / packageBin)
 
-lazy val Linux_mips64 = config("linux_mips64").extend(Compile)
-inConfig(Linux_mips64)(Defaults.compileSettings)
-Linux_mips64 / packageBin / mappings := {
-  (file(s"target/classes/linux/mips64/libzstd-jni-${version.value}.so"), s"linux/mips64/libzstd-jni-${version.value}.so") :: classes
-}
-addArtifact(Artifact(nameValue, "linux_mips64"), Linux_mips64 / packageBin)
-
 lazy val Linux_loongarch64 = config("linux_loongarch64").extend(Compile)
 inConfig(Linux_loongarch64)(Defaults.compileSettings)
 Linux_loongarch64 / packageBin / mappings := {
@@ -439,7 +433,7 @@ addArtifact(Artifact(nameValue, "cloud"), Cloud / packageBin)
 
 val classifiedConfigs = Seq(
   Linux_amd64, Linux_i386, Linux_aarch64, Linux_arm, Linux_ppc64le, Linux_ppc64,
-  Linux_mips64, Linux_loongarch64, Linux_s390x, Linux_riscv64, Aix_ppc64,
+  Linux_loongarch64, Linux_s390x, Linux_riscv64, Aix_ppc64,
   Darwin_x86_64, Darwin_aarch64, FreeBSD_amd64, FreeBSD_i386,
   Win_x86, Win_amd64, Win_aarch64, Cloud
 )
@@ -455,6 +449,7 @@ val classifiedConfigs = Seq(
   c / packageBin := {
     val jar = (c / packageBin).value
     verifyMultiRelease(jar, streams.value.log)
+    verifyModuleDescriptor(jar, streams.value.log)
     jar
   }
 )) ++
@@ -551,13 +546,11 @@ lazy val testFromJarSetup = taskKey[Unit]("Package the jar and compile the tests
 // packageBin would rebuild libzstd (gcc+LTO) every run - testFromJarSetup does it once.
 lazy val testFromJar = inputKey[Unit]("Run the test suite against the packaged jar under the given JDK")
 
-// One task rather than two commands: sbt would rebuild the native library for each
-// of them, and this way the whole graph - jniCompile included - runs once.
-testFromJarSetup := {
-  val _  = (Compile / packageBin).value
-  // `products`, not `compile`: it also copies the test resources into place.
-  val __ = (Test / products).value
-}
+// Test preparation can rebuild the native library in target/classes. Finish it
+// before packaging reads that file: sibling .value dependencies run in parallel
+// and can otherwise put a truncated, still-being-linked library into the jar.
+// `products`, not `compile`, also copies the test resources into place.
+testFromJarSetup := Def.sequential(Test / products, Compile / packageBin).value
 
 testFromJar := {
   val log  = streams.value.log
@@ -731,4 +724,23 @@ def verifyMultiRelease(jar: File, log: Logger): Unit = {
       s"$ffmRelease and match the base public API" +
       (if (additions.nonEmpty) s", ${additions.size} package-private helper class(es)" else "") + ".")
   } finally jf.close()
+}
+
+// Fail the build if the JDK can't load the jar as a module.
+def verifyModuleDescriptor(jar: File, log: Logger): Unit = {
+  import scala.collection.JavaConverters._
+  val refs =
+    try java.lang.module.ModuleFinder.of(jar.toPath).findAll().asScala
+    catch {
+      case e: java.lang.module.FindException =>
+        sys.error(s"${jar.getName} is not a valid module: ${Option(e.getCause).getOrElse(e).getMessage}")
+    }
+  refs.headOption match {
+    case Some(ref) =>
+      val d = ref.descriptor
+      log.info(s"Module check: ${jar.getName} - ${d.toNameAndVersion} exports " +
+        d.exports.asScala.map(_.source).toSeq.sorted.mkString(", "))
+    case None =>
+      sys.error(s"${jar.getName} has no module descriptor")
+  }
 }

@@ -18,8 +18,8 @@ public class ZstdCompressCtx extends AutoCloseBase {
     private long nativePtr = 0;
 
     /* The same ZSTD_CCtx as `nativePtr`, in the shape a downcall takes. Both are kept:
-     * the parameter setters below still go through Zstd's JNI natives, which want the
-     * raw pointer. `nativePtr` stays the closed flag, as in the JNI implementation. */
+     * many Zstd.* methods the setters below call still take the pointer as a long.
+     * `nativePtr` stays the closed flag, as in the JNI implementation. */
     @NotNull
     private MemorySegment cctx = MemorySegment.NULL;
 
@@ -872,7 +872,7 @@ public class ZstdCompressCtx extends AutoCloseBase {
         if (srcOffset + srcSize > src.capacity()) return -ZstdBinding.ZSTD_ERROR_SRC_SIZE_WRONG;
 
         ZstdBinding.resetCCtx(cctx, ZstdBinding.ZSTD_RESET_SESSION_ONLY);
-        return ZstdBinding.compress2(cctx,
+        return ZstdBinding.compress2Native(cctx,
                 directSegment(dst).asSlice(dstOffset, dstSize), dstSize,
                 directSegment(src).asSlice(srcOffset, srcSize), srcSize);
     }
