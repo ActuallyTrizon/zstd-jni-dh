@@ -296,6 +296,39 @@ class ZstdSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
     }
   }
 
+  for (direct <- List(false, true)) {
+    "buffer decompression streams" should s"reject a read-only target without consuming input (direct=$direct)" in {
+      val input = "read-only destination".getBytes("UTF-8")
+      val compressed = Zstd.compress(input)
+      val source = if (direct) ByteBuffer.allocateDirect(compressed.length) else ByteBuffer.allocate(compressed.length)
+      source.put(compressed)
+      source.flip()
+      val target = if (direct) ByteBuffer.allocateDirect(input.length + 3) else ByteBuffer.allocate(input.length + 3)
+      target.position(3)
+      val readOnlyTarget = target.asReadOnlyBuffer()
+
+      Using.Manager { use =>
+        val stream: BaseZstdBufferDecompressingStreamNoFinalizer = use(
+          if (direct) new ZstdDirectBufferDecompressingStreamNoFinalizer(source)
+          else new ZstdBufferDecompressingStreamNoFinalizer(source)
+        )
+        assertThrows[IllegalArgumentException] {
+          stream.read(readOnlyTarget)
+        }
+        assert(source.position() == 0)
+        assert(readOnlyTarget.position() == 3)
+        for (i <- 0 until target.capacity()) assert(target.get(i) == 0)
+
+        assert(stream.read(target) == input.length)
+        target.flip()
+        target.position(3)
+        val output = new Array[Byte](input.length)
+        target.get(output)
+        assert(output.toSeq == input.toSeq)
+      }.get
+    }
+  }
+
   for (level <- levels) {
     "ZstdDirectBufferDecompressingStream" should s"should round-trip compression/decompression at level $level" in {
       forAll { input: Array[Byte] =>
@@ -1785,6 +1818,48 @@ class ZstdSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
           val decompressed = dctx.decompress(compressedMagicless, input.length)
           assert(input.toSeq == decompressed.toSeq)
         }
+      }
+    }.get
+  }
+
+  "ZstdDecompressCtx.setLongMax" should "reject frames whose window exceeds the limit" in {
+    Using.Manager { use =>
+      val input = Array.tabulate[Byte](1 << 16)(i => (i % 251).toByte)
+      // Feeding the input before ending the frame leaves its size unknown,
+      // so the full window is kept in the frame header
+      val cctx = use(new ZstdCompressCtx())
+      cctx.setLong(24)
+      val src = ByteBuffer.allocateDirect(input.length)
+      src.put(input)
+      src.flip()
+      val compressed = ByteBuffer.allocateDirect(Zstd.compressBound(input.length).toInt)
+      cctx.compressByteBufferStream(compressed, src, EndDirective.CONTINUE)
+      assert(!src.hasRemaining)
+      assert(cctx.compressByteBufferStream(compressed, src, EndDirective.END))
+      compressed.flip()
+
+      def decompress(dctx: ZstdDecompressCtx): Array[Byte] = {
+        val in = compressed.duplicate()
+        val out = ByteBuffer.allocateDirect(input.length)
+        while (!dctx.decompressByteBufferStream(out, in)) {}
+        out.flip()
+        val result = new Array[Byte](out.remaining())
+        out.get(result)
+        result
+      }
+
+      val dctx = use(new ZstdDecompressCtx())
+      dctx.setLongMax(23)
+      assertThrows[ZstdException] {
+        decompress(dctx)
+      }
+
+      dctx.reset()
+      dctx.setLongMax(24)
+      assert(decompress(dctx).toSeq == input.toSeq)
+
+      assertThrows[ZstdException] {
+        dctx.setLongMax(Zstd.windowLogMax() + 1)
       }
     }.get
   }
