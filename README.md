@@ -1,11 +1,11 @@
-Zstd-Jni Android
+Zstd-Jni Dh
 ========
 
-[![CI](https://github.com/ActuallyTrizon/zstd-jni-android/workflows/CI/badge.svg)](https://github.com/ActuallyTrizon/zstd-jni-android/actions)
+[![CI](https://github.com/ActuallyTrizon/zstd-jni-dh/workflows/CI/badge.svg)](https://github.com/ActuallyTrizon/zstd-jni-dh/actions)
 [![codecov.io](http://codecov.io/github/luben/zstd-jni/coverage.svg?branch=master)](http://codecov.io/github/luben/zstd-jni?branch=master)
 [![Maven Central](https://img.shields.io/maven-central/v/com.github.luben/zstd-jni.svg?label=Maven%20Central)](https://search.maven.org/artifact/com.github.luben/zstd-jni/)
 [![Javadocs](https://www.javadoc.io/badge/com.github.luben/zstd-jni.svg)](https://www.javadoc.io/doc/com.github.luben/zstd-jni)
-[![License](https://img.shields.io/github/license/ActuallyTrizon/zstd-jni-android?style=flat-square)](https://github.com/ActuallyTrizon/zstd-jni-android/blob/main/LICENSE)
+[![License](https://img.shields.io/github/license/ActuallyTrizon/zstd-jni-dh?style=flat-square)](https://github.com/ActuallyTrizon/zstd-jni-dh/blob/main/LICENSE)
 [![Profile](https://img.shields.io/badge/GitHub-ActuallyTrizon-181717?style=flat-square&logo=github)](https://github.com/ActuallyTrizon)
 
 

@@ -40,3 +40,4 @@ jobs:
         with:
           name: zstd-jni
           path: "target/*.aar"
+          if-no-files-found: error
