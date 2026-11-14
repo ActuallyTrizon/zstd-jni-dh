@@ -81,7 +81,7 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
         return this;
     }
 
-    public void compress(@NotNull ByteBuffer source) throws IOException {
+    public synchronized void compress(@NotNull ByteBuffer source) throws IOException {
         if (!source.isDirect()) {
             throw new IllegalArgumentException("Source buffer should be a direct buffer");
         }
@@ -105,12 +105,15 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
         }
         while (source.hasRemaining()) {
             ByteBuffer target = this.target;
-            if (target == null) {
+            if (target == null || closed) {
                 throw new IOException("Stream closed");
             }
             if (!target.hasRemaining()) {
                 target = flushBuffer(target);
                 this.target = target;
+                if (closed) {
+                    throw new IOException("Stream closed");
+                }
                 if (!target.isDirect()) {
                     throw new IllegalArgumentException("Target buffer should be a direct buffer");
                 }
@@ -128,7 +131,7 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
     }
 
     @Override
-    public void flush() throws IOException {
+    public synchronized void flush() throws IOException {
         if (closed) {
             throw new IOException("Already closed");
         }
@@ -136,7 +139,7 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
             long needed;
             do {
                 ByteBuffer target = this.target;
-                if (target == null) {
+                if (target == null || closed) {
                     throw new IOException("Stream closed");
                 }
                 needed = flushStream(stream, target, target.position(), target.remaining());
@@ -159,14 +162,14 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
     }
 
     @Override
-    public void close() throws IOException {
+    public synchronized void close() throws IOException {
         if (!closed) {
             try {
                 if (initialized) {
                     long needed;
                     do {
                         ByteBuffer target = this.target;
-                        if (target == null) {
+                        if (target == null || closed) {
                             throw new IOException("Stream closed");
                         }
                         needed = endStream(stream, target, target.position(), target.remaining());
@@ -186,7 +189,9 @@ public class ZstdDirectBufferCompressingStreamNoFinalizer implements Closeable, 
                 }
             }
             finally {
-                freeCStream(stream);
+                if (!closed) {
+                    freeCStream(stream);
+                }
                 closed = true;
                 initialized = false;
                 target = null; // help GC with realizing the buffer can be released

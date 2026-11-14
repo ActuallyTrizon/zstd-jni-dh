@@ -1355,6 +1355,69 @@ class ZstdSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
     assert(extraRead == -1, "Expected -1 (EOF) when reading after frame is complete")
   }
 
+  it should "fail on a truncated frame that starts in the same read as the end of the previous frame" in {
+    val first = Zstd.compress("foo".getBytes("UTF-8"))
+    val input = new Array[Byte](1000)
+    new scala.util.Random(42).nextBytes(input)
+    val second = Zstd.compress(input)
+    // A single read of the underlying stream returns the end of the first frame and the start of the second.
+    val truncated = first ++ second.take(second.length / 2)
+
+    val zis = new ZstdInputStream(new ByteArrayInputStream(truncated))
+    val output = new Array[Byte](3 + input.length)
+    assertThrows[ZstdIOException] {
+      var totalRead = 0
+      var bytesRead = 0
+      while ({ bytesRead = zis.read(output, totalRead, output.length - totalRead); bytesRead != -1 && totalRead < output.length }) {
+        totalRead += bytesRead
+      }
+    }
+    zis.close()
+  }
+
+  it should "fail on such a truncated frame once continuous mode ends" in {
+    val first = Zstd.compress("foo".getBytes("UTF-8"))
+    val input = new Array[Byte](1000)
+    new scala.util.Random(42).nextBytes(input)
+    val second = Zstd.compress(input)
+    val truncated = first ++ second.take(second.length / 2)
+
+    val zis = new ZstdInputStream(new ByteArrayInputStream(truncated))
+    zis.setContinuous(true)
+    val output = new Array[Byte](3 + input.length)
+    var totalRead = 0
+    var bytesRead = 0
+    while (zis.available() > 0 && { bytesRead = zis.read(output, totalRead, output.length - totalRead); bytesRead > 0 }) {
+      totalRead += bytesRead
+    }
+    zis.setContinuous(false)
+    assertThrows[ZstdIOException] {
+      zis.read()
+    }
+    zis.close()
+  }
+
+  it should "read two frames from a single read of the underlying stream" in {
+    val first = Zstd.compress("foo".getBytes("UTF-8"))
+    val input = new Array[Byte](1000)
+    new scala.util.Random(42).nextBytes(input)
+    val second = Zstd.compress(input)
+
+    val zis = new ZstdInputStream(new ByteArrayInputStream(first ++ second))
+    val output = new Array[Byte](3 + input.length)
+    var totalRead = 0
+    var bytesRead = 0
+    while ({ bytesRead = zis.read(output, totalRead, output.length - totalRead); bytesRead != -1 && totalRead < output.length }) {
+      totalRead += bytesRead
+    }
+    val extraRead = zis.read()
+    zis.close()
+
+    assert(totalRead == output.length)
+    assert(output.toSeq == ("foo".getBytes("UTF-8") ++ input).toSeq)
+    assert(extraRead == -1)
+  }
+
   "RecyclingBufferPool" should "recycle buffers" in {
     val pool = RecyclingBufferPool.INSTANCE
     val largeBuf1 = pool.get(10)
@@ -1952,6 +2015,38 @@ class ZstdSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
     zis.close()
   }
 
+  "ZstdInputStream.resetSession" should "decompress a second stream after reset" in {
+    val input1 = "hello world".getBytes("UTF-8")
+    val input2 = "goodbye world".getBytes("UTF-8")
+    val compressed1 = Zstd.compress(input1)
+    val compressed2 = Zstd.compress(input2)
+
+    val zis = new ZstdInputStream(new ByteArrayInputStream(compressed1))
+
+    // decompress first stream
+    val output1 = new Array[Byte](input1.length)
+    var total = 0
+    while (total < input1.length) {
+      val read = zis.read(output1, total, input1.length - total)
+      assert(read != -1, "unexpected EOF on first stream")
+      total += read
+    }
+    assert(input1.toSeq == output1.toSeq)
+
+    // reset and decompress second stream
+    zis.resetSession(new ByteArrayInputStream(compressed2))
+    val output2 = new Array[Byte](input2.length)
+    total = 0
+    while (total < input2.length) {
+      val read = zis.read(output2, total, input2.length - total)
+      assert(read != -1, "unexpected EOF on second stream")
+      total += read
+    }
+    assert(input2.toSeq == output2.toSeq)
+
+    zis.close()
+  }
+
   it should "decompress correctly after resetting mid-stream" in {
     val input1 = "abcdefghij" * 100
     val input2 = "klmnopqrst" * 100
@@ -1977,6 +2072,51 @@ class ZstdSpec extends AnyFlatSpec with ScalaCheckPropertyChecks {
     assert(expected2.toSeq == output2.toSeq)
 
     zis.close()
+  }
+
+  it should "release the cached destination when resetting the FFM stream" in {
+    val streamClass = classOf[ZstdInputStreamNoFinalizer]
+    val arrayField = streamClass.getDeclaredFields.find(_.getName == "lastDstArray")
+      .getOrElse(cancel("The JNI implementation does not cache destination arrays"))
+    val segmentField = streamClass.getDeclaredField("lastDstSegment")
+    arrayField.setAccessible(true)
+    segmentField.setAccessible(true)
+
+    val input1 = "hello world".getBytes("UTF-8")
+    val input2 = "goodbye world".getBytes("UTF-8")
+    val expected = input1 ++ input2
+    val originalInput = new ByteArrayInputStream(Zstd.compress(input1))
+    val nextInput = new ByteArrayInputStream(Zstd.compress(input1) ++ Zstd.compress(input2))
+
+    Using.resource(new ZstdInputStreamNoFinalizer(originalInput)) { zis =>
+      val destination = new Array[Byte](4 * 1024 * 1024)
+      assert(zis.read(destination, 0, 1) == 1)
+      assert(destination(0) == input1(0))
+      val destinationCached = arrayField.get(zis) eq destination
+      assert(destinationCached, "the read should cache the entire destination array")
+      assert(segmentField.get(zis) != null)
+
+      assert(zis.resetSession(nextInput) eq originalInput)
+      val destinationReleased = arrayField.get(zis) == null
+      val segmentReleased = segmentField.get(zis) == null
+      assert(destinationReleased, "resetSession retained the previous destination array")
+      assert(segmentReleased, "resetSession retained the previous destination segment")
+
+      val output = new Array[Byte](expected.length)
+      assert(zis.read(output, 0, 1) == 1)
+      val cachedSegment = segmentField.get(zis)
+      assert(cachedSegment != null)
+      new DataInputStream(zis).readFully(output, 1, expected.length - 2)
+      assert(arrayField.get(zis) eq output)
+      assert(segmentField.get(zis) eq cachedSegment)
+      assert(zis.read(output, expected.length - 1, 1) == 1)
+      assert(output.toSeq == expected.toSeq)
+      assert(arrayField.get(zis) == null)
+      assert(segmentField.get(zis) == null)
+      assert(zis.read() == -1)
+      assert(arrayField.get(zis) == null)
+      assert(segmentField.get(zis) == null)
+    }
   }
 
   it should "throw IOException when reset is called on a closed stream" in {

@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.lang.foreign.MemorySegment;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
 
 /**
  * InputStream filter that decompresses the data provided
@@ -51,13 +52,18 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
      * segmentOf below), but `src` never changes, so it is built once in the
      * constructor. */
     private final @NotNull MemorySegment srcSegment;
-    private static final int srcBuffSize = (int) recommendedDInSize();
 
     private boolean isContinuous = false;
     private boolean frameFinished = true;
     private boolean isClosed = false;
-    // keep the active dict alive
-    private @Nullable ZstdDictDecompress active_dict;
+    private boolean isMultiDict = false;
+    // Dicts loaded while multi-dict mode was on. Native zstd keeps them in the DCtx's ddictSet,
+    // which is only freed together with the DCtx (not by switching back to single-dict mode or by
+    // loading another dict), so they must stay locked until close().
+    private LinkedList<ZstdDictDecompress> active_dicts =  new LinkedList<ZstdDictDecompress>();
+    // The dict loaded while in single-dict mode, if any. Native only references it as the current
+    // DCtx dict (never in ddictSet), so it can be released as soon as another dict replaces it.
+    private ZstdDictDecompress singleDict = null;
 
     /* The destination is the caller's array, and a reader that asks for small
      * chunks hands over the same one on every call. Wrapping it fresh each time
@@ -118,7 +124,7 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
     public ZstdInputStreamNoFinalizer(@NotNull InputStream inStream, @NotNull BufferPool bufferPool) throws IOException {
         super(inStream);
         this.bufferPool = bufferPool;
-        this.srcByteBuffer = Zstd.getArrayBackedBuffer(bufferPool, srcBuffSize);
+        this.srcByteBuffer = Zstd.getArrayBackedBuffer(bufferPool, (int) recommendedDInSize());
         this.src = srcByteBuffer.array();
         this.srcSegment = MemorySegment.ofArray(src);
         // memory barrier
@@ -166,16 +172,31 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
         int size = Zstd.loadFastDictDecompress(stream, dict);
         if (Zstd.isError(size)) {
             if (dict != null) {
-                dict.releaseSharedLock();
+                long code = Zstd.getErrorCode(size);
+                if (code == Zstd.errStageWrong() || code == Zstd.errDictionaryWrong()) {
+                    // failed before the DCtx was touched: native does not reference the dict
+                    dict.releaseSharedLock();
+                } else {
+                    // ZSTD_DCtx_refDDict fails on growing ddictSet only after it has made this dict
+                    // the current one, so native may still use it: keep it locked until close()
+                    active_dicts.addFirst(dict);
+                }
             }
             throw new ZstdIOException(size);
         }
-        // release the shared lock on the previously used dict (if any)
-        if (active_dict != null) {
-            active_dict.releaseSharedLock();
+        // ZSTD_DCtx_refDDict dropped the previous current dict. If that one was loaded in
+        // single-dict mode it is not in ddictSet, so native no longer references it.
+        ZstdDictDecompress previous = singleDict;
+        if (isMultiDict) {
+            // native added it to ddictSet: keep it locked until close()
+            active_dicts.addFirst(dict);
+            singleDict = null;
+        } else {
+            singleDict = dict;
         }
-        // keep the dict alive so it's not garbage collected
-        active_dict = dict;
+        if (previous != null) {
+            previous.releaseSharedLock();
+        }
         return this;
     }
 
@@ -198,6 +219,7 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
         if (Zstd.isError(size)) {
             throw new ZstdIOException(size);
         }
+        isMultiDict = useMultiple;
         return this;
     }
 
@@ -240,10 +262,12 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
             // we will read only if data from the upstream is available OR
             // we have not yet produced any output
             if (needRead && (in.available() > 0 || dstPosition == offset)) {
-                srcSize = in.read(src, 0, srcBuffSize);
+                srcSize = in.read(src, 0, src.length);
                 srcPos.set(0);
                 if (srcSize < 0) {
                     srcSize = 0;
+                    lastDstArray = null;
+                    lastDstSegment = null;
                     if (frameFinished) {
                         return -1;
                     } else if (isContinuous) {
@@ -262,10 +286,21 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
                 }
             }
 
+            if (isClosed) {
+                throw new IOException("Stream closed");
+            }
+
+            // Input left over after a finished frame is the start of the next one.
+            if (srcPos.get() < srcSize) {
+                frameFinished = false;
+            }
+
             lastDstPos = dstPosition;
             long size = decompressStream(dstSegment, dstSize, srcSize);
 
             if (Zstd.isError(size)) {
+                lastDstArray = null;
+                lastDstSegment = null;
                 throw new ZstdIOException(size);
             }
             dstPosition = dstPos.get();
@@ -273,9 +308,13 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
             // we have completed a frame
             if (size == 0) {
                 frameFinished = true;
-                // we need to read from the upstream only if we have not consumed
+                // we need to read from the upstream only if we have consumed
                 // fully the source buffer
                 needRead = srcPos.get() == srcSize;
+                if (needRead) {
+                    lastDstArray = null;
+                    lastDstSegment = null;
+                }
                 return (int)(dstPosition - offset);
             } else {
                 // size > 0, so more input is required but there is data left in
@@ -388,6 +427,8 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
         this.srcSize = 0;
         this.needRead = true;
         this.frameFinished = true;
+        this.lastDstArray = null;
+        this.lastDstSegment = null;
         return oldInputStream;
     }
 
@@ -395,9 +436,12 @@ public class ZstdInputStreamNoFinalizer extends FilterInputStream {
         if (isClosed) {
             return;
         }
-        if (active_dict != null) {
-            active_dict.releaseSharedLock();
-            active_dict = null;
+        while (active_dicts.size() > 0) {
+            active_dicts.removeLast().releaseSharedLock();
+        }
+        if (singleDict != null) {
+            singleDict.releaseSharedLock();
+            singleDict = null;
         }
         isClosed = true;
         bufferPool.release(srcByteBuffer);
